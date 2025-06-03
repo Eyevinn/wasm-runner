@@ -28,7 +28,21 @@ Compile to wasm:
 Upload `main.wasm` to a bucket for download and then run the container providing the URL to the WASM file:
 
 ```
-% docker run --rm -e WASM_URL=https://eyevinnlab-birme.minio-minio.auto.prod.osaas.io/code/main.wasm wasm-runner:local
+% docker run --rm \
+  -p 8080:8080 \
+  -e WASM_URL=https://eyevinnlab-birme.minio-minio.auto.prod.osaas.io/code/main.wasm \
+  wasm-runner:local
+```
+
+The WASM application `main.wasm` can now be invoked through the HTTP server on port 8080. Provides these endpoints:
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| GET    | /    | Invoke the application and return what the application writes to STDOUT |
+| POST   | /    | Invoke the application and the request body is provided to the application on STDIN. Return STDOUT output |
+
+```
+% curl http://localhost:8080/
 Hello, world!
 ```
 
