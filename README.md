@@ -1,6 +1,6 @@
 # wasm-runner
 
-Docker container that downloads a WASM compiled file and running using [wasmtime](https://github.com/bytecodealliance/wasmtime?tab=readme-ov-file) runtime.
+Docker container that downloads a WASM compiled file and running using [wasmedge](https://github.com/WasmEdge/WasmEdge) runtime.
 
 ## Usage
 
@@ -21,8 +21,8 @@ fn main() {
 Compile to wasm:
 
 ```
-% rustup target add wasm32-wasip2
-% rustc main.rs --target wasm32-wasip2
+% rustup target add wasm32-wasip1
+% rustc main.rs --target wasm32-wasip1
 ```
 
 Upload `main.wasm` to a bucket for download and then run the container providing the URL to the WASM file:
