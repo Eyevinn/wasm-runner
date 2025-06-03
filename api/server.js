@@ -38,13 +38,18 @@ fastify.get('/', async (request, reply) => {
 });
 
 fastify.post('/', async (request, reply) => {
-  const typedArray = new Uint8Array(    
-    request.body.match(/[\da-f]{2}/gi).map(function (h) {
-      return parseInt(h, 16);
-    })
-  );
-  let buf = await _runWasm(typedArray);
-  reply.send(buf.toString());
+  if (request.body.match(/^[\da-f]+$/i)) {
+    const typedArray = new Uint8Array(    
+      request.body.match(/[\da-f]{2}/gi).map(function (h) {
+        return parseInt(h, 16);
+      })
+    );
+    let buf = await _runWasm(typedArray);
+    reply.send(buf.toString());
+  } else {
+    let buf = await _runWasm(request.body);
+    reply.send(buf.toString());
+  }
 });
 
 fastify.listen({ port: process.env.PORT || 8080, host: '0.0.0.0' }, function (err, address) {
