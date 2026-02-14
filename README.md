@@ -36,6 +36,36 @@ Upload `main.wasm` to a bucket for download and then run the container providing
   wasm-runner:local
 ```
 
+Alternatively, provide a GitHub repository URL containing a `.wasm` file:
+
+```
+% docker run --rm \
+  -p 8080:8080 \
+  -e GITHUB_URL=https://github.com/<org>/<repo>/ \
+  wasm-runner:local
+```
+
+For private repositories, provide a GitHub personal access token:
+
+```
+% docker run --rm \
+  -p 8080:8080 \
+  -e GITHUB_URL=https://github.com/<org>/<repo>/ \
+  -e GITHUB_TOKEN=<token> \
+  wasm-runner:local
+```
+
+You can specify a branch using a URL fragment:
+
+```
+% docker run --rm \
+  -p 8080:8080 \
+  -e GITHUB_URL=https://github.com/<org>/<repo>#<branch> \
+  wasm-runner:local
+```
+
+The entrypoint will clone the repository, find the first `.wasm` file, and run it. The WASM module is expected to follow the [WASI](https://wasi.dev/) convention and export a `_start` entry point (the default for `wasmedge`).
+
 The WASM application `main.wasm` can now be invoked through the HTTP server on port 8080. Provides these endpoints:
 
 | Method | Path | Description |
