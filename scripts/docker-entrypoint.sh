@@ -1,35 +1,42 @@
 #!/bin/bash
 
-if [ -z "$WASM_URL" ] && [ -z "$GITHUB_URL" ]; then
-  echo "WASM_URL or GITHUB_URL must be set. Exiting."
+if [ -z "$WASM_URL" ] && [ -z "$GITHUB_URL" ] && [ -z "$GIT_URL" ]; then
+  echo "WASM_URL, GIT_URL, or GITHUB_URL must be set. Exiting."
   exit 1
 fi
 
-if [[ ! -z "$WASM_URL" ]] && [[ "$WASM_URL" =~ ^https?://github\.com/ ]]; then
-  GITHUB_URL="$WASM_URL"
+if [[ ! -z "$WASM_URL" ]] && [[ "$WASM_URL" =~ ^https?://.+/.+ ]]; then
+  GIT_URL="$WASM_URL"
   unset WASM_URL
+fi
+
+# Backward compatibility: convert GITHUB_URL to GIT_URL
+if [[ -z "$GIT_URL" ]] && [[ ! -z "$GITHUB_URL" ]]; then
+  GIT_URL="$GITHUB_URL"
 fi
 
 STAGING_DIR="/usercontent"
 echo "ensure staging dir is empty"
 rm -rf /usercontent/* /usercontent/.[!.]*
 
-if [[ ! -z "$GITHUB_URL" ]]; then
+if [[ ! -z "$GIT_URL" ]]; then
   branch=""
-  if [[ "$GITHUB_URL" == *"#"* ]]; then
-    branch="${GITHUB_URL#*#}"
+  if [[ "$GIT_URL" == *"#"* ]]; then
+    branch="${GIT_URL#*#}"
     branch="${branch%/}"
-    GITHUB_URL="${GITHUB_URL%%#*}"
+    GIT_URL="${GIT_URL%%#*}"
   fi
 
-  path="/${GITHUB_URL#*://*/}" && [[ "/${GITHUB_URL}" == "${path}" ]] && path="/"
+  GIT_HOST=$(echo "$GIT_URL" | sed -E 's|^https?://([^/]+).*|\1|')
+  path="/${GIT_URL#*://*/}" && [[ "/${GIT_URL}" == "${path}" ]] && path="/"
 
-  if [[ ! -z "$GITHUB_TOKEN" ]]; then
-    echo "cloning https://***@github.com${path}"
-    git clone https://$GITHUB_TOKEN@github.com${path} /usercontent/
+  TOKEN="${GIT_TOKEN:-$GITHUB_TOKEN}"
+  if [[ ! -z "$TOKEN" ]]; then
+    echo "cloning https://***@${GIT_HOST}${path}"
+    git clone "https://${TOKEN}@${GIT_HOST}${path}" /usercontent/
   else
-    echo "cloning https://github.com${path}"
-    git clone https://github.com${path} /usercontent/
+    echo "cloning https://${GIT_HOST}${path}"
+    git clone "https://${GIT_HOST}${path}" /usercontent/
   fi
 
   git config --global --add safe.directory /usercontent
