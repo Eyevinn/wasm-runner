@@ -33,7 +33,7 @@ if [[ ! -z "$GIT_URL" ]]; then
   TOKEN="${GIT_TOKEN:-$GITHUB_TOKEN}"
   if [[ ! -z "$TOKEN" ]]; then
     echo "cloning https://***@${GIT_HOST}${path}"
-    git clone "https://${TOKEN}@${GIT_HOST}${path}" /usercontent/
+    git clone "https://token:${TOKEN}@${GIT_HOST}${path}" /usercontent/
   else
     echo "cloning https://${GIT_HOST}${path}"
     git clone "https://${GIT_HOST}${path}" /usercontent/
