@@ -15,6 +15,37 @@ if [[ -z "$GIT_URL" ]] && [[ ! -z "$GITHUB_URL" ]]; then
   GIT_URL="$GITHUB_URL"
 fi
 
+# Write commit metadata to a well-known file for platform visibility
+write_commit_info() {
+  local repo_dir="$1"
+  if [ -d "$repo_dir/.git" ]; then
+    local sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
+    if [ -n "$sha" ]; then
+      local short_sha=$(echo "$sha" | cut -c1-7)
+      local message=$(git -C "$repo_dir" log -1 --format='%s' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g')
+      local author=$(git -C "$repo_dir" log -1 --format='%an' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g')
+      local date=$(git -C "$repo_dir" log -1 --format='%aI' 2>/dev/null)
+
+      local recent="["
+      local first=true
+      while IFS='|' read -r c_sha c_msg c_author c_date; do
+        [ -z "$c_sha" ] && continue
+        local c_short=$(echo "$c_sha" | cut -c1-7)
+        c_msg=$(echo "$c_msg" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        c_author=$(echo "$c_author" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        if [ "$first" = true ]; then first=false; else recent="$recent,"; fi
+        recent="$recent{\"sha\":\"$c_sha\",\"shortSha\":\"$c_short\",\"message\":\"$c_msg\",\"author\":\"$c_author\",\"date\":\"$c_date\"}"
+      done <<< "$(git -C "$repo_dir" log -5 --format='%H|%s|%an|%aI' 2>/dev/null)"
+      recent="$recent]"
+
+      cat > "$repo_dir/.commit-info.json" << COMMITEOF
+{"sha":"$sha","shortSha":"$short_sha","message":"$message","author":"$author","date":"$date","recentCommits":$recent}
+COMMITEOF
+      echo "Commit info: $short_sha - $message"
+    fi
+  fi
+}
+
 STAGING_DIR="/usercontent"
 echo "ensure staging dir is empty"
 rm -rf /usercontent/* /usercontent/.[!.]*
@@ -44,6 +75,8 @@ if [[ ! -z "$GIT_URL" ]]; then
     echo "checking out branch: $branch"
     git -C /usercontent/ checkout "$branch"
   fi
+
+  write_commit_info /usercontent
 
   # Find .wasm file in repo (WASI _start entry point is called by wasmedge by default)
   WASM_FILE=$(find /usercontent -name "*.wasm" -type f ! -path "/usercontent/.git/*" | head -1)
