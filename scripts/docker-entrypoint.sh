@@ -18,32 +18,32 @@ fi
 # Write commit metadata to a well-known file for platform visibility
 write_commit_info() {
   local repo_dir="$1"
-  if [ -d "$repo_dir/.git" ]; then
-    local sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
-    if [ -n "$sha" ]; then
-      local short_sha=$(echo "$sha" | cut -c1-7)
-      local message=$(git -C "$repo_dir" log -1 --format='%s' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g')
-      local author=$(git -C "$repo_dir" log -1 --format='%an' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g')
-      local date=$(git -C "$repo_dir" log -1 --format='%aI' 2>/dev/null)
+  if ! git -C "$repo_dir" rev-parse HEAD >/dev/null 2>&1; then return 0; fi
+  local sha shortSha msg author date
+  sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null) || return 0
+  shortSha=$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null) || return 0
+  msg=$(git -C "$repo_dir" log -1 --format='%s' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g') || return 0
+  author=$(git -C "$repo_dir" log -1 --format='%an' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g') || return 0
+  date=$(git -C "$repo_dir" log -1 --format='%aI' 2>/dev/null) || return 0
 
-      local recent="["
-      local first=true
-      while IFS='|' read -r c_sha c_msg c_author c_date; do
-        [ -z "$c_sha" ] && continue
-        local c_short=$(echo "$c_sha" | cut -c1-7)
-        c_msg=$(echo "$c_msg" | sed 's/\\/\\\\/g; s/"/\\"/g')
-        c_author=$(echo "$c_author" | sed 's/\\/\\\\/g; s/"/\\"/g')
-        if [ "$first" = true ]; then first=false; else recent="$recent,"; fi
-        recent="$recent{\"sha\":\"$c_sha\",\"shortSha\":\"$c_short\",\"message\":\"$c_msg\",\"author\":\"$c_author\",\"date\":\"$c_date\"}"
-      done <<< "$(git -C "$repo_dir" log -5 --format='%H|%s|%an|%aI' 2>/dev/null)"
-      recent="$recent]"
+  local recent="["
+  local first=true
+  while read -r c_sha; do
+    [ -z "$c_sha" ] && continue
+    local c_short c_msg c_author c_date
+    c_short=$(git -C "$repo_dir" rev-parse --short "$c_sha" 2>/dev/null)
+    c_msg=$(git -C "$repo_dir" log -1 --format='%s' "$c_sha" 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g')
+    c_author=$(git -C "$repo_dir" log -1 --format='%an' "$c_sha" 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g')
+    c_date=$(git -C "$repo_dir" log -1 --format='%aI' "$c_sha" 2>/dev/null)
+    if [ "$first" = true ]; then first=false; else recent="$recent,"; fi
+    recent="$recent{\"sha\":\"$c_sha\",\"shortSha\":\"$c_short\",\"message\":\"$c_msg\",\"author\":\"$c_author\",\"date\":\"$c_date\"}"
+  done <<< "$(git -C "$repo_dir" log -5 --format='%H' 2>/dev/null)"
+  recent="$recent]"
 
-      cat > "$repo_dir/.commit-info.json" << COMMITEOF
-{"sha":"$sha","shortSha":"$short_sha","message":"$message","author":"$author","date":"$date","recentCommits":$recent}
-COMMITEOF
-      echo "Commit info: $short_sha - $message"
-    fi
-  fi
+  printf '{"sha":"%s","shortSha":"%s","message":"%s","author":"%s","date":"%s","recentCommits":%s}\n' \
+    "$sha" "$shortSha" "$msg" "$author" "$date" "$recent" \
+    > "$repo_dir/.commit-info.json" 2>/dev/null || true
+  echo "Commit info: $shortSha - $msg"
 }
 
 STAGING_DIR="/usercontent"
