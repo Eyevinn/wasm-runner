@@ -69,6 +69,8 @@ if [[ ! -z "$GIT_URL" ]]; then
     echo "cloning https://${GIT_HOST}${path}"
     git clone "https://${GIT_HOST}${path}" /usercontent/
   fi
+  # Scrub PAT from origin remote — token must not persist to .git/config
+  git -C /usercontent/ remote set-url origin "https://${GIT_HOST}${path}"
 
   git config --global --add safe.directory /usercontent
   if [[ ! -z "$branch" ]]; then
