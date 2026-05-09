@@ -78,6 +78,21 @@ The WASM application `main.wasm` can now be invoked through the HTTP server on p
 Hello, world!
 ```
 
+## Environment Variables
+
+| Variable | Required | Description |
+| -------- | -------- | ----------- |
+| `WASM_URL` | Yes* | URL to a `.wasm` file to download and run. Mutually exclusive with `GITHUB_URL` / `GIT_URL`. |
+| `GITHUB_URL` | Yes* | URL to a GitHub repository containing a `.wasm` file. Mutually exclusive with `WASM_URL`. Alias for `GIT_URL`. |
+| `GIT_URL` | Yes* | URL to a Git repository containing a `.wasm` file. Supports a branch suffix (`#<branch>`). Mutually exclusive with `WASM_URL`. |
+| `GITHUB_TOKEN` | No | Personal access token for cloning private GitHub repositories. Alias for `GIT_TOKEN`. |
+| `GIT_TOKEN` | No | Personal access token for cloning private Git repositories. |
+| `CONFIG_SVC` | No | Hostname of the OSC parameter store service. When set alongside `OSC_ACCESS_TOKEN`, environment variables are loaded from the config service before the WASM module starts. |
+| `OSC_ACCESS_TOKEN` | No | OSC service access token. Required for config service integration (`CONFIG_SVC`). |
+| `CONFIG_API_KEY` | No | API key for encrypted parameter store. When set alongside `OSC_ACCESS_TOKEN` and `CONFIG_SVC`, secret parameters are decrypted before being injected as environment variables. |
+
+\* Exactly one of `WASM_URL`, `GITHUB_URL`, or `GIT_URL` must be provided.
+
 ## Contributing
 
 See [CONTRIBUTING](CONTRIBUTING.md)
