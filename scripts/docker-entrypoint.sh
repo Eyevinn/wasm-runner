@@ -98,9 +98,30 @@ fi
 chown runner:runner -R /usercontent
 cd /usercontent
 
-if [[ ! -z "$OSC_ACCESS_TOKEN" ]] && [[ ! -z "$CONFIG_SVC" ]]; then
-  echo "Loading environment variables from application config service '$CONFIG_SVC'"
-  eval `npx -y @osaas/cli@latest web config-to-env $CONFIG_SVC`
+if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
+  # Derive OSC environment from OSC_MCP_URL if OSC_ENV is not set explicitly
+  if [[ -z "${OSC_ENV:-}" && -n "${OSC_MCP_URL:-}" ]]; then
+    _extracted=$(echo "$OSC_MCP_URL" | sed -n 's|.*\.svc\.\([a-z]*\)\.osaas\.io.*|\1|p')
+    OSC_ENV=${_extracted:-prod}
+  fi
+  # Token refresh block (matching birme/claude-runner#14)
+  REFRESH_RESULT=$(curl -sf -X POST \
+    "https://token.svc.${OSC_ENV:-prod}.osaas.io/runner-token/refresh" \
+    -H "x-pat-jwt: $OSC_ACCESS_TOKEN" 2>&1) && \
+    OSC_ACCESS_TOKEN=$(echo "$REFRESH_RESULT" | jq -r '.token // empty') || true
+  echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
+  config_env_output=$(npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>&1)
+  config_exit=$?
+  if [ $config_exit -eq 0 ]; then
+    valid_exports=$(echo "$config_env_output" | grep "^export [A-Za-z_][A-Za-z0-9_]*=")
+    if [ -n "$valid_exports" ]; then
+      eval "$valid_exports"
+      var_count=$(echo "$valid_exports" | wc -l | tr -d ' ')
+      echo "[CONFIG] Loaded $var_count environment variable(s)"
+    fi
+  else
+    echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_env_output" >&2
+  fi
 fi
 
 exec runuser -u runner "$@"
