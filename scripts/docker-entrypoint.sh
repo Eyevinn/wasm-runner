@@ -15,6 +15,12 @@ if [[ -z "$GIT_URL" ]] && [[ ! -z "$GITHUB_URL" ]]; then
   GIT_URL="$GITHUB_URL"
 fi
 
+# Run a git command while scrubbing any leaked credentials from its stderr.
+# Uses process substitution (not a pipe) so $? still reflects the git command.
+git_scrub_stderr() {
+  "$@" 2> >(sed -r 's/gh[pso]_[A-Za-z0-9]{20,}/[REDACTED]/g; s/([Bb]asic )[A-Za-z0-9+\/=]{8,}/\1[REDACTED]/g' >&2)
+}
+
 # Write commit metadata to a well-known file for platform visibility
 write_commit_info() {
   local repo_dir="$1"
@@ -62,15 +68,14 @@ if [[ ! -z "$GIT_URL" ]]; then
   path="/${GIT_URL#*://*/}" && [[ "/${GIT_URL}" == "${path}" ]] && path="/"
 
   TOKEN="${GIT_TOKEN:-$GITHUB_TOKEN}"
+  GIT_AUTH_ARGS=()
   if [[ ! -z "$TOKEN" ]]; then
-    echo "cloning https://***@${GIT_HOST}${path}"
-    git clone "https://token:${TOKEN}@${GIT_HOST}${path}" /usercontent/
-  else
-    echo "cloning https://${GIT_HOST}${path}"
-    git clone "https://${GIT_HOST}${path}" /usercontent/
+    AUTH_B64=$(printf '%s' "x-access-token:${TOKEN}" | base64 | tr -d '\n')
+    GIT_AUTH_ARGS=(-c "http.https://${GIT_HOST}/.extraheader=AUTHORIZATION: basic ${AUTH_B64}")
   fi
-  # Scrub PAT from origin remote — token must not persist to .git/config
-  git -C /usercontent/ remote set-url origin "https://${GIT_HOST}${path}"
+
+  echo "cloning https://${GIT_HOST}${path}"
+  git_scrub_stderr git "${GIT_AUTH_ARGS[@]}" clone "https://${GIT_HOST}${path}" /usercontent/
 
   git config --global --add safe.directory /usercontent
   if [[ ! -z "$branch" ]]; then
