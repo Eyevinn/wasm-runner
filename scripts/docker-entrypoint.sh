@@ -115,7 +115,7 @@ if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
     -H "x-pat-jwt: $OSC_ACCESS_TOKEN" 2>&1) && \
     OSC_ACCESS_TOKEN=$(echo "$REFRESH_RESULT" | jq -r '.token // empty') || true
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
-  config_env_output=$(npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>&1)
+  config_env_output=$(timeout 60s npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>&1)
   config_exit=$?
   if [ $config_exit -eq 0 ]; then
     valid_exports=$(echo "$config_env_output" | grep "^export [A-Za-z_][A-Za-z0-9_]*=")
