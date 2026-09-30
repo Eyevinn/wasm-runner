@@ -1,0 +1,99 @@
+name: Sync fork in prod
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: sync-fork-prod
+  cancel-in-progress: false
+
+jobs:
+  sync-fork-prod:
+    name: Sync fork and remake in prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MAKER_URL: https://maker.svc.prod.osaas.io
+      MAKER_API_KEY: ${{ secrets.OSC_PROD_MAKER_API_KEY }}
+      REPO_URL: https://github.com/${{ github.repository }}
+    steps:
+      - name: Trigger sync-fork
+        id: sync
+        run: |
+          set -euo pipefail
+          if [ -z "$MAKER_API_KEY" ]; then
+            echo "::error::Secret OSC_PROD_MAKER_API_KEY is not set"
+            exit 1
+          fi
+          PREV_ORDER_ID=$(curl -sf -G "$MAKER_URL/maker" \
+            --data-urlencode "repositoryUrl=$REPO_URL" \
+            -H "Authorization: Bearer $MAKER_API_KEY" \
+            | jq -r '.[0].order.orderId // "none"')
+          echo "Order before sync: $PREV_ORDER_ID"
+          echo "prev_order_id=$PREV_ORDER_ID" >> "$GITHUB_OUTPUT"
+          JOB_ID=$(curl -sf -X POST "$MAKER_URL/sync-fork" \
+            -H "Authorization: Bearer $MAKER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"repositoryUrl\":\"$REPO_URL\"}" | jq -r '.jobId // empty')
+          if [ -z "$JOB_ID" ]; then
+            echo "::error::No jobId returned from POST /sync-fork"
+            exit 1
+          fi
+          echo "Sync-fork job: $JOB_ID"
+          echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for sync-fork job
+        env:
+          JOB_ID: ${{ steps.sync.outputs.job_id }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            RESP=$(curl -sf "$MAKER_URL/sync-fork/$JOB_ID" \
+              -H "Authorization: Bearer $MAKER_API_KEY" || echo '{}')
+            STATUS=$(echo "$RESP" | jq -r '.status // "unknown"')
+            echo "sync-fork $JOB_ID status: $STATUS"
+            case "$STATUS" in
+              succeeded) exit 0 ;;
+              failed)
+                echo "::error::Sync-fork failed: $(echo "$RESP" | jq -r '.reason // "unknown"') $(echo "$RESP" | jq -r '.message // ""')"
+                exit 1
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Timed out waiting for sync-fork job"
+          exit 1
+
+      - name: Wait for remake to complete
+        env:
+          PREV_ORDER_ID: ${{ steps.sync.outputs.prev_order_id }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 120); do
+            ORDER=$(curl -sf -G "$MAKER_URL/maker" \
+              --data-urlencode "repositoryUrl=$REPO_URL" \
+              -H "Authorization: Bearer $MAKER_API_KEY" || echo '[]')
+            ORDER_ID=$(echo "$ORDER" | jq -r '.[0].order.orderId // "none"')
+            PHASE=$(echo "$ORDER" | jq -r '.[0].order.status.phase // "NOT_FOUND"')
+            echo "order $ORDER_ID phase: $PHASE"
+            if [ "$ORDER_ID" = "none" ]; then
+              echo "::error::No order found in prod for $REPO_URL"
+              exit 1
+            fi
+            if [ "$ORDER_ID" = "$PREV_ORDER_ID" ]; then
+              echo "::error::Order was not remade (same order id $ORDER_ID); a build may have been in progress"
+              exit 1
+            fi
+            case "$PHASE" in
+              DONE) exit 0 ;;
+              FAILED|ERROR)
+                echo "::error::Remake ended in phase $PHASE"
+                exit 1
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Timed out waiting for remake"
+          exit 1
