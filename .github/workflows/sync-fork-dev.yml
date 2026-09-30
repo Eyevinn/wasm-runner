@@ -28,10 +28,20 @@ jobs:
             echo "::error::Secret OSC_DEV_MAKER_API_KEY is not set"
             exit 1
           fi
+          PREV_ORDER_ID=$(curl -sf -G "$MAKER_URL/maker" \
+            --data-urlencode "repositoryUrl=$REPO_URL" \
+            -H "Authorization: Bearer $MAKER_API_KEY" \
+            | jq -r '.[0].order.orderId // "none"')
+          echo "Order before sync: $PREV_ORDER_ID"
+          echo "prev_order_id=$PREV_ORDER_ID" >> "$GITHUB_OUTPUT"
           JOB_ID=$(curl -sf -X POST "$MAKER_URL/sync-fork" \
             -H "Authorization: Bearer $MAKER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"repositoryUrl\":\"$REPO_URL\"}" | jq -r '.jobId')
+            -d "{\"repositoryUrl\":\"$REPO_URL\"}" | jq -r '.jobId // empty')
+          if [ -z "$JOB_ID" ]; then
+            echo "::error::No jobId returned from POST /sync-fork"
+            exit 1
+          fi
           echo "Sync-fork job: $JOB_ID"
           echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
 
@@ -58,14 +68,25 @@ jobs:
           exit 1
 
       - name: Wait for remake to complete
+        env:
+          PREV_ORDER_ID: ${{ steps.sync.outputs.prev_order_id }}
         run: |
           set -euo pipefail
           for i in $(seq 1 120); do
-            PHASE=$(curl -sf -G "$MAKER_URL/maker" \
+            ORDER=$(curl -sf -G "$MAKER_URL/maker" \
               --data-urlencode "repositoryUrl=$REPO_URL" \
-              -H "Authorization: Bearer $MAKER_API_KEY" \
-              | jq -r '.[0].order.status.phase // "NOT_FOUND"' || echo "UNKNOWN")
-            echo "order phase: $PHASE"
+              -H "Authorization: Bearer $MAKER_API_KEY" || echo '[]')
+            ORDER_ID=$(echo "$ORDER" | jq -r '.[0].order.orderId // "none"')
+            PHASE=$(echo "$ORDER" | jq -r '.[0].order.status.phase // "NOT_FOUND"')
+            echo "order $ORDER_ID phase: $PHASE"
+            if [ "$ORDER_ID" = "none" ]; then
+              echo "::error::No order found in dev for $REPO_URL"
+              exit 1
+            fi
+            if [ "$ORDER_ID" = "$PREV_ORDER_ID" ]; then
+              echo "::error::Order was not remade (same order id $ORDER_ID); a build may have been in progress"
+              exit 1
+            fi
             case "$PHASE" in
               DONE) exit 0 ;;
               FAILED|ERROR)
