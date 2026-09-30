@@ -1,0 +1,79 @@
+name: Sync fork in dev
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: sync-fork-dev
+  cancel-in-progress: false
+
+jobs:
+  sync-fork-dev:
+    name: Sync fork and remake in dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MAKER_URL: https://maker.svc.dev.osaas.io
+      MAKER_API_KEY: ${{ secrets.OSC_DEV_MAKER_API_KEY }}
+      REPO_URL: https://github.com/${{ github.repository }}
+    steps:
+      - name: Trigger sync-fork
+        id: sync
+        run: |
+          set -euo pipefail
+          if [ -z "$MAKER_API_KEY" ]; then
+            echo "::error::Secret OSC_DEV_MAKER_API_KEY is not set"
+            exit 1
+          fi
+          JOB_ID=$(curl -sf -X POST "$MAKER_URL/sync-fork" \
+            -H "Authorization: Bearer $MAKER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"repositoryUrl\":\"$REPO_URL\"}" | jq -r '.jobId')
+          echo "Sync-fork job: $JOB_ID"
+          echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for sync-fork job
+        env:
+          JOB_ID: ${{ steps.sync.outputs.job_id }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            RESP=$(curl -sf "$MAKER_URL/sync-fork/$JOB_ID" \
+              -H "Authorization: Bearer $MAKER_API_KEY" || echo '{}')
+            STATUS=$(echo "$RESP" | jq -r '.status // "unknown"')
+            echo "sync-fork $JOB_ID status: $STATUS"
+            case "$STATUS" in
+              succeeded) exit 0 ;;
+              failed)
+                echo "::error::Sync-fork failed: $(echo "$RESP" | jq -r '.reason // "unknown"') $(echo "$RESP" | jq -r '.message // ""')"
+                exit 1
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Timed out waiting for sync-fork job"
+          exit 1
+
+      - name: Wait for remake to complete
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 120); do
+            PHASE=$(curl -sf -G "$MAKER_URL/maker" \
+              --data-urlencode "repositoryUrl=$REPO_URL" \
+              -H "Authorization: Bearer $MAKER_API_KEY" \
+              | jq -r '.[0].order.status.phase // "NOT_FOUND"' || echo "UNKNOWN")
+            echo "order phase: $PHASE"
+            case "$PHASE" in
+              DONE) exit 0 ;;
+              FAILED|ERROR)
+                echo "::error::Remake ended in phase $PHASE"
+                exit 1
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Timed out waiting for remake"
+          exit 1
