@@ -105,6 +105,43 @@ else
   fi
 fi
 
+# 7. @osaas/cli must be pinned via OSAAS_CLI_VERSION (set once in the Dockerfile)
+if grep -rn '@osaas/cli@latest' "$ENTRYPOINT" "$REPO_ROOT"/Dockerfile* >/dev/null; then
+  fail "found an unpinned @osaas/cli@latest reference"
+else
+  pass "no unpinned @osaas/cli@latest reference"
+fi
+
+if [ "$(grep -c '^ENV OSAAS_CLI_VERSION=[0-9][0-9.]*$' "$REPO_ROOT/Dockerfile")" -eq 1 ]; then
+  pass "Dockerfile pins OSAAS_CLI_VERSION exactly once"
+else
+  fail "Dockerfile does not pin OSAAS_CLI_VERSION exactly once"
+fi
+
+NPX_LINE=$(grep 'npx -y' "$ENTRYPOINT" | grep -v '^\s*#')
+STUB_DIR=$(mktemp -d)
+printf '#!/bin/bash\necho "npx-args: $*"\n' >"$STUB_DIR/npx"
+chmod +x "$STUB_DIR/npx"
+CONFIG_SVC=svc
+PINNED=$(sed -n 's/^ENV OSAAS_CLI_VERSION=//p' "$REPO_ROOT/Dockerfile")
+
+# Passing path: the pinned version is the one passed to npx
+OUT=$(PATH="$STUB_DIR:$PATH" OSAAS_CLI_VERSION="$PINNED" bash -c "timeout() { shift; \"\$@\"; }; out=\$($(echo "$NPX_LINE" | sed 's/^ *[a-z_]*=\$(//; s/ 2>&1)$//')); echo \"\$out\"" 2>&1)
+if echo "$OUT" | grep -q "npx-args: -y @osaas/cli@$PINNED web config-to-env"; then
+  pass "entrypoint invokes @osaas/cli@$PINNED"
+else
+  fail "entrypoint did not invoke the pinned version: $OUT"
+fi
+
+# Rejection path: unset OSAAS_CLI_VERSION fails clearly and does not run npx
+OUT=$(env -u OSAAS_CLI_VERSION PATH="$STUB_DIR:$PATH" bash -c "timeout() { shift; \"\$@\"; }; out=\$($(echo "$NPX_LINE" | sed 's/^ *[a-z_]*=\$(//; s/ 2>&1)$//')); echo \"\$out\"" 2>&1)
+if echo "$OUT" | grep -q 'OSAAS_CLI_VERSION must be set' && ! echo "$OUT" | grep -q 'npx-args'; then
+  pass "unset OSAAS_CLI_VERSION fails clearly"
+else
+  fail "unset OSAAS_CLI_VERSION did not fail clearly: $OUT"
+fi
+rm -rf "$STUB_DIR"
+
 if [ "$FAILURES" -eq 0 ]; then
   echo "All checks passed."
   exit 0
