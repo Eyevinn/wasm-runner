@@ -20,6 +20,7 @@ VOLUME /usercontent
 RUN groupadd -r runner && useradd -r -g runner runner -d /runner
 RUN chown -R runner:runner /runner
 ENV PORT=8080
+ENV OSAAS_CLI_VERSION=4.35.0
 ENTRYPOINT [ "/runner/docker-entrypoint.sh" ]
 
 CMD ["node", "/runner/api/server.js"]
