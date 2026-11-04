@@ -126,7 +126,7 @@ CONFIG_SVC=svc
 PINNED=$(sed -n 's/^ENV OSAAS_CLI_VERSION=//p' "$REPO_ROOT/Dockerfile")
 
 # Passing path: the pinned version is the one passed to npx
-OUT=$(PATH="$STUB_DIR:$PATH" OSAAS_CLI_VERSION="$PINNED" bash -c "timeout() { shift; \"\$@\"; }; out=\$($(echo "$NPX_LINE" | sed 's/^ *[a-z_]*=\$(//; s/ 2>&1)$//')); echo \"\$out\"" 2>&1)
+OUT=$(PATH="$STUB_DIR:$PATH" OSAAS_CLI_VERSION="$PINNED" bash -c "timeout() { shift; \"\$@\"; }; out=\$($(echo "$NPX_LINE" | sed 's/^ *[a-z_]*=\$(//; s/ 2>[^)]*)$//')); echo \"\$out\"" 2>&1)
 if echo "$OUT" | grep -q "npx-args: -y @osaas/cli@$PINNED web config-to-env"; then
   pass "entrypoint invokes @osaas/cli@$PINNED"
 else
@@ -134,7 +134,7 @@ else
 fi
 
 # Rejection path: unset OSAAS_CLI_VERSION fails clearly and does not run npx
-OUT=$(env -u OSAAS_CLI_VERSION PATH="$STUB_DIR:$PATH" bash -c "timeout() { shift; \"\$@\"; }; out=\$($(echo "$NPX_LINE" | sed 's/^ *[a-z_]*=\$(//; s/ 2>&1)$//')); echo \"\$out\"" 2>&1)
+OUT=$(env -u OSAAS_CLI_VERSION PATH="$STUB_DIR:$PATH" bash -c "timeout() { shift; \"\$@\"; }; out=\$($(echo "$NPX_LINE" | sed 's/^ *[a-z_]*=\$(//; s/ 2>[^)]*)$//')); echo \"\$out\"" 2>&1)
 if echo "$OUT" | grep -q 'OSAAS_CLI_VERSION must be set' && ! echo "$OUT" | grep -q 'npx-args'; then
   pass "unset OSAAS_CLI_VERSION fails clearly"
 else

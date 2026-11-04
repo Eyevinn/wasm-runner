@@ -103,6 +103,7 @@ fi
 chown runner:runner -R /usercontent
 cd /usercontent
 
+# BEGIN CONFIG LOAD
 if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
   # Derive OSC environment from OSC_MCP_URL if OSC_ENV is not set explicitly
   if [[ -z "${OSC_ENV:-}" && -n "${OSC_MCP_URL:-}" ]]; then
@@ -115,18 +116,38 @@ if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
     -H "x-pat-jwt: $OSC_ACCESS_TOKEN" 2>&1) && \
     OSC_ACCESS_TOKEN=$(echo "$REFRESH_RESULT" | jq -r '.token // empty') || true
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
-  config_env_output=$(timeout 60s npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>&1)
+  # Read the exit status on the very next line. This script has no `set -e`
+  # (keep it that way): under `set -e` a failing `x=$(cmd)` would kill the
+  # script before config_exit is read, skipping the [CONFIG] error reporting.
+  config_err_file=$(mktemp)
+  config_env_output=$(timeout 60s npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file")
   config_exit=$?
+  config_err_output=$(cat "$config_err_file" 2>/dev/null)
+  rm -f "$config_err_file"
   if [ $config_exit -eq 0 ]; then
     valid_exports=$(echo "$config_env_output" | grep "^export [A-Za-z_][A-Za-z0-9_]*=")
     if [ -n "$valid_exports" ]; then
       eval "$valid_exports"
       var_count=$(echo "$valid_exports" | wc -l | tr -d ' ')
       echo "[CONFIG] Loaded $var_count environment variable(s)"
+    elif [ -n "$config_env_output" ]; then
+      echo "[CONFIG] ERROR: Config service '$CONFIG_SVC' returned output with no valid environment variables: $config_env_output" >&2
+      exit 1
+    else
+      echo "[CONFIG] Config service '$CONFIG_SVC' has no parameters"
     fi
   else
-    echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_env_output" >&2
+    if [ $config_exit -eq 124 ]; then
+      echo "[CONFIG] ERROR: Timed out loading config from '$CONFIG_SVC' (exit 124): $config_err_output $config_env_output" >&2
+    else
+      echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_err_output $config_env_output" >&2
+    fi
+    if echo "$config_err_output $config_env_output" | grep -qiE 'expired|unauthorized|401'; then
+      echo "[CONFIG] Use the 'refresh-app-config' MCP tool to issue a fresh token." >&2
+    fi
+    exit "$config_exit"
   fi
 fi
+# END CONFIG LOAD
 
 exec runuser -u runner "$@"
