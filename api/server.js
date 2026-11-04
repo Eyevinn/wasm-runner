@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { sendOutput } from './response.js';
 
 const fastify = Fastify({
   logger: true
@@ -34,7 +35,7 @@ function _runWasm(reqBody) {
 
 fastify.get('/', async (request, reply) => {
   let buf = await _runWasm();
-  reply.send(buf.toString());
+  sendOutput(reply, buf);
 });
 
 fastify.post('/', async (request, reply) => {
@@ -45,10 +46,10 @@ fastify.post('/', async (request, reply) => {
       })
     );
     let buf = await _runWasm(typedArray);
-    reply.send(buf.toString());
+    sendOutput(reply, buf);
   } else {
     let buf = await _runWasm(request.body);
-    reply.send(buf.toString());
+    sendOutput(reply, buf);
   }
 });
 
