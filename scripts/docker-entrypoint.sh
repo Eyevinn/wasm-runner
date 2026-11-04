@@ -21,6 +21,17 @@ git_scrub_stderr() {
   "$@" 2> >(sed -r 's/gh[pso]_[A-Za-z0-9]{20,}/[REDACTED]/g; s/([Bb]asic )[A-Za-z0-9+\/=]{8,}/\1[REDACTED]/g' >&2)
 }
 
+# Hide a platform-written file from `git status` without touching tracked files.
+exclude_from_git_status() {
+  local repo_dir="$1" name="$2" excl
+  excl="$(git -C "$repo_dir" rev-parse --git-path info/exclude 2>/dev/null)" || return 0
+  [ -n "$excl" ] || return 0
+  # git prints this path relative to the -C directory, not to this script's cwd (/runner)
+  case "$excl" in /*) ;; *) excl="$repo_dir/$excl" ;; esac
+  mkdir -p "$(dirname "$excl")" 2>/dev/null || return 0
+  grep -qxF "$name" "$excl" 2>/dev/null || echo "$name" >> "$excl" 2>/dev/null || true
+}
+
 # Write commit metadata to a well-known file for platform visibility
 write_commit_info() {
   local repo_dir="$1"
@@ -49,6 +60,7 @@ write_commit_info() {
   printf '{"sha":"%s","shortSha":"%s","message":"%s","author":"%s","date":"%s","recentCommits":%s}\n' \
     "$sha" "$shortSha" "$msg" "$author" "$date" "$recent" \
     > "$repo_dir/.commit-info.json" 2>/dev/null || true
+  exclude_from_git_status "$repo_dir" .commit-info.json
   echo "Commit info: $shortSha - $msg"
 }
 
@@ -94,6 +106,7 @@ if [[ ! -z "$GIT_URL" ]]; then
   echo "Found WASM file: $WASM_FILE"
   if [ "$WASM_FILE" != "/usercontent/main.wasm" ]; then
     cp "$WASM_FILE" /usercontent/main.wasm
+    exclude_from_git_status /usercontent main.wasm
   fi
 elif [[ ! -z "$WASM_URL" ]]; then
   echo "Downloading WASM file from $WASM_URL"
