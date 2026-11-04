@@ -78,6 +78,39 @@ The WASM application `main.wasm` can now be invoked through the HTTP server on p
 Hello, world!
 ```
 
+### Binary and non-text responses
+
+By default the runner returns STDOUT as text with `Content-Type: text/plain; charset=utf-8`. A module that needs to return raw bytes with its own content type (for example an image) can opt in by starting STDOUT with a header block:
+
+```
+OSC-HTTP-Response: 1
+Content-Type: image/png
+
+<raw bytes>
+```
+
+- The first line must be exactly `OSC-HTTP-Response: 1`, followed by a newline (`\n` or `\r\n`). Output that does not start with it is returned as before.
+- `Content-Type` is required and may appear once. No other header is supported.
+- An empty line ends the header block. Everything after it is sent unmodified as the response body, with status 200.
+- If the block is malformed, the runner answers 500 with a `text/plain` message starting `Invalid OSC-HTTP-Response header block:` and the reason. The header block must end within the first 8192 bytes.
+
+Example in Rust, using only the standard library:
+
+```rust
+use std::io::Write;
+fn main() {
+    let png: &[u8] = include_bytes!("logo.png");
+    let mut out = std::io::stdout().lock();
+    out.write_all(b"OSC-HTTP-Response: 1\nContent-Type: image/png\n\n").unwrap();
+    out.write_all(png).unwrap();
+    out.flush().unwrap();
+}
+```
+
+```
+% curl -s http://localhost:8080/ -o out.png
+```
+
 ## Environment Variables
 
 | Variable | Required | Description |
