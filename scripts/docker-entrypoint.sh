@@ -123,17 +123,40 @@ if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
     _extracted=$(echo "$OSC_MCP_URL" | sed -n 's|.*\.svc\.\([a-z]*\)\.osaas\.io.*|\1|p')
     OSC_ENV=${_extracted:-prod}
   fi
-  # Token refresh block (matching birme/claude-runner#14)
-  REFRESH_RESULT=$(curl -sf -X POST \
-    "https://token.svc.${OSC_ENV:-prod}.osaas.io/runner-token/refresh" \
-    -H "x-pat-jwt: $OSC_ACCESS_TOKEN" 2>&1) && \
-    OSC_ACCESS_TOKEN=$(echo "$REFRESH_RESULT" | jq -r '.token // empty') || true
+  # Token refresh: exchange the runner-refresh token for a short-lived PAT.
+  # The PAT is used for the config load only. OSC_ACCESS_TOKEN is left as is
+  # (the WASM module cannot observe it) and the original token is also exposed
+  # as OSC_REFRESH_TOKEN. Any failure keeps the original token. There is no jq
+  # in this image: the JSON body and the response are handled with node.
+  export OSC_REFRESH_TOKEN="${OSC_REFRESH_TOKEN:-$OSC_ACCESS_TOKEN}"
+  fresh_token=""
+  refresh_body_file=$(umask 077; mktemp)
+  refresh_resp_file=$(umask 077; mktemp)
+  node -e 'process.stdout.write(JSON.stringify({token: process.env.OSC_REFRESH_TOKEN}))' >"$refresh_body_file" 2>/dev/null
+  refresh_status=$(curl -s -o "$refresh_resp_file" -w '%{http_code}' --max-time 10 -X POST \
+    -H 'Content-Type: application/json' --data @"$refresh_body_file" \
+    "https://token.svc.${OSC_ENV:-prod}.osaas.io/runner-token/refresh" 2>/dev/null)
+  refresh_curl_exit=$?
+  refresh_code=""
+  if [ $refresh_curl_exit -eq 0 ] && [ "$refresh_status" = "200" ]; then
+    fresh_token=$(node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(typeof j.token==="string"?j.token:"")}catch(e){}' "$refresh_resp_file" 2>/dev/null)
+  elif [ $refresh_curl_exit -eq 0 ]; then
+    refresh_code=$(node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(typeof j.code==="string"?j.code:"")}catch(e){}' "$refresh_resp_file" 2>/dev/null)
+  fi
+  rm -f "$refresh_body_file" "$refresh_resp_file"
+  if [ -z "$fresh_token" ]; then
+    refresh_detail="HTTP ${refresh_status:-none}"
+    if [ $refresh_curl_exit -ne 0 ]; then
+      refresh_detail="curl exit $refresh_curl_exit"
+    fi
+    echo "[CONFIG] WARNING: runner token exchange failed ($refresh_detail, code=${refresh_code:-none}); using the original token"
+  fi
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
   # Read the exit status on the very next line. This script has no `set -e`
   # (keep it that way): under `set -e` a failing `x=$(cmd)` would kill the
   # script before config_exit is read, skipping the [CONFIG] error reporting.
   config_err_file=$(mktemp)
-  config_env_output=$(timeout 60s npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file")
+  config_env_output=$(OSC_ACCESS_TOKEN="${fresh_token:-$OSC_ACCESS_TOKEN}" timeout 60s npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file")
   config_exit=$?
   config_err_output=$(cat "$config_err_file" 2>/dev/null)
   rm -f "$config_err_file"

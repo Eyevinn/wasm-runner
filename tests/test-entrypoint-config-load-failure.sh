@@ -30,11 +30,35 @@ fi
   cat "$WORK/block.sh"
   echo 'echo REACHED_RUN'
   echo 'echo "FOO=${FOO:-unset}"'
+  echo 'echo "AFTER_ACCESS=${OSC_ACCESS_TOKEN:-unset}"'
+  echo 'echo "AFTER_REFRESH=${OSC_REFRESH_TOKEN:-unset}"'
 } > "$WORK/run.sh"
 
 # Stub curl (token refresh fails softly, as in the real block) and timeout
 # (passes through the real command after dropping the duration argument).
-printf '#!/bin/bash\nexit 22\n' > "$WORK/bin/curl"
+# The curl stub emulates the token exchange: it honours -o/--data, records the
+# request body, prints CURL_STATUS and writes CURL_BODY; it exits with
+# CURL_EXIT (default 22, i.e. the exchange fails softly as before).
+cat > "$WORK/bin/curl" <<'STUB'
+#!/bin/bash
+out=""
+data=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    --data) data="${2#@}"; shift ;;
+  esac
+  shift
+done
+[ -n "$data" ] && cat "$data" > "$CURL_BODY_LOG"
+[ -n "$out" ] && printf '%s' "${CURL_BODY:-}" > "$out"
+printf '%s' "${CURL_STATUS:-000}"
+exit "${CURL_EXIT:-22}"
+STUB
+# jq is absent from the real image: a stub that exits 127 stops a developer
+# machine that has jq from masking a regression back to jq.
+printf '#!/bin/bash\nexit 127\n' > "$WORK/bin/jq"
+chmod +x "$WORK/bin/jq"
 printf '#!/bin/bash\nshift\nexec "$@"\n' > "$WORK/bin/timeout"
 chmod +x "$WORK/bin/curl" "$WORK/bin/timeout"
 
@@ -44,10 +68,11 @@ run_case() {
   shift
   printf '#!/bin/bash\n%s\n' "$body" > "$WORK/bin/npx"
   chmod +x "$WORK/bin/npx"
-  OUT=$(env -i PATH="$WORK/bin:/usr/bin:/bin" OSAAS_CLI_VERSION=0.0.0 "$@" bash "$WORK/run.sh" 2>&1)
+  OUT=$(env -i PATH="$WORK/bin:/usr/bin:/bin:$NODE_DIR" OSAAS_CLI_VERSION=0.0.0 CURL_BODY_LOG="$WORK/curl-body.log" "$@" bash "$WORK/run.sh" 2>&1)
   RC=$?
 }
 
+NODE_DIR=$(dirname "$(command -v node)")
 CFG=(OSC_ACCESS_TOKEN=tok CONFIG_SVC=mystore)
 
 # 1. Non-zero exit fails the app
@@ -113,6 +138,41 @@ if [ $RC -eq 0 ] && echo "$OUT" | grep -q REACHED_RUN && ! echo "$OUT" | grep -q
 else
   fail "CONFIG_SVC without token (rc=$RC): $OUT"
 fi
+
+# 9. Exchange succeeds: config-to-env uses the fresh token, the app keeps the
+# original token, OSC_REFRESH_TOKEN is the original, the body is {"token":...}
+rm -f "$WORK/curl-body.log"
+run_case 'echo "export FOO=$OSC_ACCESS_TOKEN"' "${CFG[@]}" CURL_EXIT=0 CURL_STATUS=200 'CURL_BODY={"token":"fresh","expiresIn":3600}'
+if [ $RC -eq 0 ] && echo "$OUT" | grep -q REACHED_RUN && echo "$OUT" | grep -q 'FOO=fresh' \
+  && echo "$OUT" | grep -q 'AFTER_ACCESS=tok' && echo "$OUT" | grep -q 'AFTER_REFRESH=tok' \
+  && ! echo "$OUT" | grep -q 'WARNING' && [ "$(cat "$WORK/curl-body.log")" = '{"token":"tok"}' ]; then
+  pass "successful exchange: config load uses fresh token, app keeps original"
+else
+  fail "successful exchange (rc=$RC): $OUT body=$(cat "$WORK/curl-body.log" 2>/dev/null)"
+fi
+
+# 10. Exchange failures warn (status/code only), keep the original token and
+# still reach the config command.
+exchange_failure_case() {
+  local label="$1" want="$2"
+  shift 2
+  run_case 'echo "export FOO=$OSC_ACCESS_TOKEN"' "${CFG[@]}" "$@"
+  if [ $RC -eq 0 ] && echo "$OUT" | grep -q REACHED_RUN && echo "$OUT" | grep -q 'FOO=tok' \
+    && echo "$OUT" | grep -qF "[CONFIG] WARNING: runner token exchange failed ($want); using the original token" \
+    && ! echo "$OUT" | grep -q 'FOO=fresh' && echo "$OUT" | grep -q 'AFTER_ACCESS=tok'; then
+    pass "exchange failure ($label) warns and keeps original token"
+  else
+    fail "exchange failure $label (rc=$RC): $OUT"
+  fi
+}
+exchange_failure_case "401 expired" "HTTP 401, code=refresh_token_expired" CURL_EXIT=0 CURL_STATUS=401 'CURL_BODY={"code":"refresh_token_expired","token":"fresh"}'
+exchange_failure_case "401 invalid" "HTTP 401, code=refresh_token_invalid" CURL_EXIT=0 CURL_STATUS=401 'CURL_BODY={"code":"refresh_token_invalid"}'
+exchange_failure_case "500" "HTTP 500, code=none" CURL_EXIT=0 CURL_STATUS=500 'CURL_BODY=oops'
+exchange_failure_case "curl exit 22" "curl exit 22, code=none" CURL_EXIT=22
+exchange_failure_case "curl timeout 28" "curl exit 28, code=none" CURL_EXIT=28
+# A 200 without a usable token is a failure, never an empty token
+exchange_failure_case "200 without token" "HTTP 200, code=none" CURL_EXIT=0 CURL_STATUS=200 'CURL_BODY={"expiresIn":3600}'
+exchange_failure_case "200 with non-JSON" "HTTP 200, code=none" CURL_EXIT=0 CURL_STATUS=200 'CURL_BODY=not json'
 
 if [ $FAILURES -ne 0 ]; then
   echo "$FAILURES test(s) failed"

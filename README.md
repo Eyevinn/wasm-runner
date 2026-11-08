@@ -132,6 +132,7 @@ fn main() {
 | `GIT_TOKEN` | No | Personal access token for cloning private Git repositories. |
 | `CONFIG_SVC` | No | Hostname of the OSC parameter store service. When set alongside `OSC_ACCESS_TOKEN`, environment variables are loaded from the config service before the WASM module starts. |
 | `OSC_ACCESS_TOKEN` | No | OSC service access token. Required for config service integration (`CONFIG_SVC`). |
+| `OSC_REFRESH_TOKEN` | No | Set by the runner from the original `OSC_ACCESS_TOKEN` before the token exchange. |
 | `CONFIG_API_KEY` | No | API key for encrypted parameter store. When set alongside `OSC_ACCESS_TOKEN` and `CONFIG_SVC`, secret parameters are decrypted before being injected as environment variables. |
 
 \* Exactly one of `WASM_URL`, `GITHUB_URL`, or `GIT_URL` must be provided.
