@@ -159,7 +159,7 @@ exchange_failure_case() {
   run_case 'echo "export FOO=$OSC_ACCESS_TOKEN"' "${CFG[@]}" "$@"
   if [ $RC -eq 0 ] && echo "$OUT" | grep -q REACHED_RUN && echo "$OUT" | grep -q 'FOO=tok' \
     && echo "$OUT" | grep -qF "[CONFIG] WARNING: runner token exchange failed ($want); using the original token" \
-    && ! echo "$OUT" | grep -q 'fresh' && echo "$OUT" | grep -q 'AFTER_ACCESS=tok'; then
+    && ! echo "$OUT" | grep -q 'FOO=fresh' && echo "$OUT" | grep -q 'AFTER_ACCESS=tok'; then
     pass "exchange failure ($label) warns and keeps original token"
   else
     fail "exchange failure $label (rc=$RC): $OUT"

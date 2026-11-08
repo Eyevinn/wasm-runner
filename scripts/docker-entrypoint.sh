@@ -145,10 +145,11 @@ if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
   fi
   rm -f "$refresh_body_file" "$refresh_resp_file"
   if [ -z "$fresh_token" ]; then
+    refresh_detail="HTTP ${refresh_status:-none}"
     if [ $refresh_curl_exit -ne 0 ]; then
-      refresh_status="curl exit $refresh_curl_exit"
+      refresh_detail="curl exit $refresh_curl_exit"
     fi
-    echo "[CONFIG] WARNING: runner token exchange failed (HTTP ${refresh_status:-none}, code=${refresh_code:-none}); using the original token"
+    echo "[CONFIG] WARNING: runner token exchange failed ($refresh_detail, code=${refresh_code:-none}); using the original token"
   fi
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
   # Read the exit status on the very next line. This script has no `set -e`
