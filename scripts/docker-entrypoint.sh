@@ -117,6 +117,21 @@ chown runner:runner -R /usercontent
 cd /usercontent
 
 # BEGIN CONFIG LOAD
+# redact_config_log: scrub credentials from text before it is written to the
+# pod log. Literal values of the runner's own tokens are replaced first, then
+# well-known token shapes (GitHub tokens, JWTs, Basic auth).
+redact_config_log() {
+  local s="$1" v
+  for v in "${OSC_ACCESS_TOKEN:-}" "${OSC_REFRESH_TOKEN:-}" "${fresh_token:-}" "${CONFIG_API_KEY:-}" "${GIT_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
+    if [ -n "$v" ]; then
+      s="${s//"$v"/[REDACTED]}"
+    fi
+  done
+  printf '%s' "$s" | sed -E \
+    -e 's/gh[pso]_[A-Za-z0-9]{20,}/[REDACTED]/g' \
+    -e 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/[REDACTED]/g' \
+    -e 's/([Bb]asic )[A-Za-z0-9+\/=]{8,}/\1[REDACTED]/g'
+}
 if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
   # Derive OSC environment from OSC_MCP_URL if OSC_ENV is not set explicitly
   if [[ -z "${OSC_ENV:-}" && -n "${OSC_MCP_URL:-}" ]]; then
@@ -167,18 +182,22 @@ if [[ -n "${OSC_ACCESS_TOKEN:-}" && -n "${CONFIG_SVC:-}" ]]; then
       var_count=$(echo "$valid_exports" | wc -l | tr -d ' ')
       echo "[CONFIG] Loaded $var_count environment variable(s)"
     elif [ -n "$config_env_output" ]; then
-      echo "[CONFIG] ERROR: Config service '$CONFIG_SVC' returned output with no valid environment variables: $config_env_output" >&2
+      # Never print the output itself: it holds decrypted parameter values.
+      # Names only (tenant-chosen keys), enough to see which key is invalid.
+      rejected_lines=$(echo "$config_env_output" | grep -c "^export " || true)
+      rejected_names=$(echo "$config_env_output" | sed -n 's/^export \([^= ]*\)=.*/\1/p' | head -n 10 | cut -c1-64 | tr '\n' ' ')
+      echo "[CONFIG] ERROR: Config service '$CONFIG_SVC' returned output with no valid environment variables ($rejected_lines export line(s) rejected, names: ${rejected_names:-none}; values not logged)" >&2
       exit 1
     else
       echo "[CONFIG] Config service '$CONFIG_SVC' has no parameters"
     fi
   else
     if [ $config_exit -eq 124 ]; then
-      echo "[CONFIG] ERROR: Timed out loading config from '$CONFIG_SVC' (exit 124): $config_err_output $config_env_output" >&2
+      echo "[CONFIG] ERROR: Timed out loading config from '$CONFIG_SVC' (exit 124): $(redact_config_log "$config_err_output")" >&2
     else
-      echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_err_output $config_env_output" >&2
+      echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $(redact_config_log "$config_err_output")" >&2
     fi
-    if echo "$config_err_output $config_env_output" | grep -qiE 'expired|unauthorized|401'; then
+    if echo "$config_err_output" | grep -qiE 'expired|unauthorized|401'; then
       echo "[CONFIG] Use the 'refresh-app-config' MCP tool to issue a fresh token." >&2
     fi
     exit "$config_exit"

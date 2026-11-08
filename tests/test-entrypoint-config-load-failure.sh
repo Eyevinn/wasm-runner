@@ -108,11 +108,63 @@ else
 fi
 
 # 5. Valid exports are loaded and the run phase is reached
-run_case 'echo "export FOO=bar"' "${CFG[@]}"
-if [ $RC -eq 0 ] && echo "$OUT" | grep -q REACHED_RUN && echo "$OUT" | grep -q 'FOO=bar'; then
-  pass "valid exports are loaded and run phase reached"
+run_case 'echo "export FOO=bar"; echo "export BAZ=qux"' "${CFG[@]}"
+if [ $RC -eq 0 ] && echo "$OUT" | grep -q REACHED_RUN && echo "$OUT" | grep -q 'FOO=bar' \
+  && echo "$OUT" | grep -q 'Loaded 2 environment variable(s)' && ! echo "$OUT" | grep -q 'qux'; then
+  pass "valid exports are loaded, run phase reached, values not logged"
 else
   fail "valid exports (rc=$RC): $OUT"
+fi
+
+# 5a. Failure with a secret on stdout: not logged, hint still driven by stderr
+run_case "echo \"export DB_PASS='S3CR3T-canary'\"; echo 'boom 401 unauthorized' >&2; exit 2" "${CFG[@]}"
+if [ $RC -eq 2 ] && echo "$OUT" | grep -q 'Failed to load config (exit 2)' && echo "$OUT" | grep -q 'refresh-app-config' \
+  && ! echo "$OUT" | grep -q 'S3CR3T-canary'; then
+  pass "failure with secret on stdout does not log it"
+else
+  fail "leak on failure (rc=$RC): $OUT"
+fi
+
+# 5b. Timeout after partial stdout: not logged
+run_case "echo \"export DB_PASS='S3CR3T-canary'\"; exit 124" "${CFG[@]}"
+if [ $RC -eq 124 ] && echo "$OUT" | grep -q 'Timed out' && ! echo "$OUT" | grep -q 'S3CR3T-canary'; then
+  pass "timeout with secret on stdout does not log it"
+else
+  fail "leak on timeout (rc=$RC): $OUT"
+fi
+
+# 5c. Invalid key name: name logged, value not
+run_case "echo \"export MY-KEY='S3CR3T-canary'\"" "${CFG[@]}"
+if [ $RC -ne 0 ] && ! echo "$OUT" | grep -q REACHED_RUN && echo "$OUT" | grep -q 'no valid environment variables' \
+  && echo "$OUT" | grep -q 'MY-KEY' && ! echo "$OUT" | grep -q 'S3CR3T-canary'; then
+  pass "invalid key name logged without its value"
+else
+  fail "leak on invalid key (rc=$RC): $OUT"
+fi
+
+# 5d. Tokens in stderr are redacted (literal token and well-known shapes)
+run_case 'echo "auth failed for ${OSC_ACCESS_TOKEN} with ghp_abcdefghijklmnopqrstuvwxyz0123456789 and eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl" >&2; exit 2' OSC_ACCESS_TOKEN=osc-literal-token-9f3a CONFIG_SVC=mystore
+if [ $RC -eq 2 ] && echo "$OUT" | grep -q '\[REDACTED\]' \
+  && ! echo "$OUT" | grep -qE 'osc-literal-token-9f3a|ghp_abcdefghijklmnopqrstuvwxyz0123456789|eyJhbGciOiJIUzI1NiJ9'; then
+  pass "tokens in stderr are redacted"
+else
+  fail "token redaction (rc=$RC): $OUT"
+fi
+
+# 5e. The exchanged (fresh) token is redacted too
+run_case 'echo "bad token $OSC_ACCESS_TOKEN" >&2; exit 2' OSC_ACCESS_TOKEN=osc-literal-token-9f3a CONFIG_SVC=mystore CURL_EXIT=0 CURL_STATUS=200 'CURL_BODY={"token":"fresh-literal-token-77aa","expiresIn":3600}'
+if [ $RC -eq 2 ] && echo "$OUT" | grep -q '\[REDACTED\]' && ! echo "$OUT" | grep -q 'fresh-literal-token-77aa'; then
+  pass "fresh exchanged token is redacted"
+else
+  fail "fresh token redaction (rc=$RC): $OUT"
+fi
+
+# 5f. Stdout must not drive the refresh hint
+run_case "echo \"export X='expired 401'\"; echo boom >&2; exit 2" "${CFG[@]}"
+if [ $RC -eq 2 ] && ! echo "$OUT" | grep -q refresh-app-config && ! echo "$OUT" | grep -q 'expired 401'; then
+  pass "stdout no longer drives the refresh hint"
+else
+  fail "hint from stdout (rc=$RC): $OUT"
 fi
 
 # 6. Empty store (exit 0, empty stdout, stderr noise) continues
